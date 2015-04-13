@@ -1,0 +1,506 @@
+;; The first three lines of this file were inserted by DrRacket. They record metadata
+;; about the language level of this file in a form that our tools can easily process.
+#reader(lib "htdp-advanced-reader.ss" "lang")((modname lab-12) (read-case-sensitive #t) (teachpacks ()) (htdp-settings #(#t constructor repeating-decimal #f #t none #f ())))
+(require 2htdp/universe)       
+(require 2htdp/image)
+
+
+;; A simple pac-man game
+
+;; Constants:
+
+(define E "empty") ;See CellValue data definition below
+(define D "dot")   ;
+(define W "wall")  ;
+(define F "fruit")
+
+(define INIT-BOARD ;See Board data definition below
+  (vector (vector W W W W W W W W W W W W W)
+          (vector W F D D D D D D D D D F W)
+          (vector W D W D W W W W W D W D W)
+          (vector W D W D W D F D W D W D W)
+          (vector W D W D D D W D D D W D W)
+          (vector W D W W D W W W D W W D W)
+          (vector W D D D D D E D D D D D W)
+          (vector W W W W W W W W W W W W W)))
+
+(define SMALL-BOARD
+  (vector (vector E E E)
+          (vector E E E)))
+
+(define CELL-SIZE 20)
+
+(define BOARD-WIDTH  (* CELL-SIZE (vector-length (vector-ref INIT-BOARD 0))))
+(define BOARD-HEIGHT (* CELL-SIZE (vector-length INIT-BOARD)))
+
+(define SMALL-BOARD-WIDTH  (* CELL-SIZE (vector-length (vector-ref SMALL-BOARD 0))))
+(define SMALL-BOARD-HEIGHT (* CELL-SIZE (vector-length SMALL-BOARD)))
+
+(define SCORE-HEIGHT    30)
+(define SCORE-TEXT-SIZE 20)
+
+(define PM (circle 10 "solid" "yellow"))
+
+(define MTC  (rectangle CELL-SIZE CELL-SIZE "solid" "black")) ; empty cell
+(define DTC  (overlay (circle 3  "solid" "white") MTC))       ; dot in cell
+(define FTC  (overlay (circle 5  "solid" "red")   MTC))       ; fruit in cell
+(define WALL (rectangle CELL-SIZE CELL-SIZE "solid" "blue"))  ; wall
+
+(define MTB 
+  (empty-scene BOARD-WIDTH
+               (+ BOARD-HEIGHT SCORE-HEIGHT))) 
+
+(define SMALL-MTB
+  (empty-scene SMALL-BOARD-WIDTH
+               (+ SMALL-BOARD-HEIGHT SCORE-HEIGHT)))
+
+
+
+;; Data definitions:
+
+
+;; Score is Natural
+;; interp. dots eaten by pac-man since start of game
+
+(define INIT-SCORE  0)
+
+;; CellValue is one of:
+;; - "empty"
+;; - "dot"
+;; - "wall"
+;; interp. the content of a board cell
+
+;; Direction is one of:
+;; - "U"
+;; - "D"
+;; - "L"
+;; - "R"
+;; interp. direction that a sprite is facing
+
+(define-struct sprite (x y dir))
+;; Sprite is (make-sprite Natural Natural Direction)
+;; interp. the position in Board coordinates, and the direction of a sprite
+
+(define INIT-PM (make-sprite 6 6 "U"))
+
+;; Board is (vectorof (vectorof CellValue))
+;; interp. the game board
+
+(define RENDER-TEST-BOARD (vector (vector W E)
+                                  (vector D E)))
+
+(define-struct gs (pm board board-image score))
+;; GameState is (make-gs Sprite Board Image Score)
+;; interp. all parts of the pac-man game; pac-man, the current
+;; board, the current board image, and the current score
+
+(define MTB-GS (make-gs INIT-PM INIT-BOARD MTB INIT-SCORE))
+
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; Testing values:
+
+;; Sprite:
+(define R-SPRITE (make-sprite 1 1 "R"))
+(define L-SPRITE (make-sprite 1 1 "L"))
+(define U-SPRITE (make-sprite 1 1 "U"))
+(define D-SPRITE (make-sprite 1 1 "D"))
+
+;; Board:
+(define EE-BOARD (vector (vector W W W W)
+                         (vector W E E W)
+                         (vector W W W W)))
+
+(define ED-BOARD (vector (vector W W W W)
+                         (vector W E D W)
+                         (vector W W W W)))
+
+(define DD-BOARD (vector (vector W W W W)
+                         (vector W D D W)
+                         (vector W W W W)))
+
+;; GameState:
+;; MTB-GS previously defined above
+(define END-GS (make-gs R-SPRITE EE-BOARD SMALL-MTB 0))
+
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; Functions:
+
+
+;; -> GameState
+;; runs the game
+(define (main)
+  (local [(define INIT-GS (make-gs INIT-PM
+                                   INIT-BOARD
+                                   (render-board INIT-BOARD)
+                                   INIT-SCORE))]
+    (big-bang INIT-GS
+              (on-tick tick .3)
+              (to-draw render)
+              (on-key key-handler)
+              (stop-when game-over?))))
+
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; on-tick handler:
+
+
+;; GameState -> GameState
+;; advances the game
+(check-expect (tick MTB-GS) MTB-GS)
+
+(define (tick gs)
+  (local [(define pm          (gs-pm gs))
+          (define board       (gs-board gs))
+          (define board-image (gs-board-image gs))
+          (define score       (gs-score gs))
+          (define new-pm          (tick-pm pm board))
+          (define new-board       (tick-board board new-pm))
+          (define new-board-image (tick-board-image board board-image new-pm))
+          (define new-score       (tick-score new-pm board score))]
+    (make-gs new-pm
+             new-board
+             new-board-image
+             new-score)))
+
+;; Sprite Board -> Sprite
+;; updates pac-man's position based on its direction
+(check-expect (tick-pm R-SPRITE EE-BOARD) 
+              (make-sprite (checked-move-x (sprite-x R-SPRITE) (sprite-y R-SPRITE) (sprite-dir R-SPRITE) EE-BOARD) 
+                           (checked-move-y (sprite-x R-SPRITE) (sprite-y R-SPRITE) (sprite-dir R-SPRITE) EE-BOARD) 
+                           (sprite-dir R-SPRITE)))
+(check-expect (tick-pm U-SPRITE DD-BOARD) 
+              (make-sprite (checked-move-x (sprite-x U-SPRITE) (sprite-y U-SPRITE) (sprite-dir U-SPRITE) DD-BOARD) 
+                           (checked-move-y (sprite-x U-SPRITE) (sprite-y U-SPRITE) (sprite-dir U-SPRITE) DD-BOARD) 
+                           (sprite-dir U-SPRITE)))
+
+; (define (tick-pm pm bd) pm)
+
+(define (tick-pm pm bd) (make-sprite (checked-move-x (sprite-x pm) (sprite-y pm) (sprite-dir pm) bd)
+                                     (checked-move-y (sprite-x pm) (sprite-y pm) (sprite-dir pm) bd)
+                                     (sprite-dir pm)))
+
+;; Natural Natural Direction Board -> Natural
+;; moves x in direction dir, unless it runs into a wall on bd or dir is not in the x direction
+;; ASSUMPTION: assumes x, y is at least one cell away from any edge of bd
+(check-expect (checked-move-x 4 4 "U" INIT-BOARD) 4)
+(check-expect (checked-move-x 4 4 "L" INIT-BOARD) 3)
+(check-expect (checked-move-x 4 4 "R" INIT-BOARD) 5)
+
+(define (checked-move-x x y dir bd)
+  (cond [(string=? "L" dir) (restrict-move (sub1 x) y x (sub1 x) bd)]
+        [(string=? "R" dir) (restrict-move (add1 x) y x (add1 x) bd)]
+        [else x]))
+
+;; Natural Natural Direction Board -> Natural
+;; moves y in direction dir, unless it runs into a wall on bd or dir is not in the y direction
+;; ASSUMPTION: assumes x, y is at least one cell away from any edge of bd
+(check-expect (checked-move-y 4 4 "U" INIT-BOARD) 4)
+(check-expect (checked-move-y 4 4 "D" INIT-BOARD) 5)
+(check-expect (checked-move-y 4 4 "L" INIT-BOARD) 4)
+
+(define (checked-move-y x y dir bd)
+  (cond [(string=? "U" dir) (restrict-move x (sub1 y) y (sub1 y) bd)]
+        [(string=? "D" dir) (restrict-move x (add1 y) y (add1 y) bd)]
+        [else y]))
+
+;; Natural Natural Natural Natural Board -> Natural
+;; produces new-coord if bd does not contain a wall at check-x, check-y; otherwise produces old-coord
+(check-expect (restrict-move 0 1 1 0 INIT-BOARD) 1)
+(check-expect (restrict-move 1 2 1 2 INIT-BOARD) 2)
+
+(define (restrict-move check-x check-y old-coord new-coord bd)
+  (if (string=? (board-ref bd check-x check-y) "wall")
+      old-coord
+      new-coord))
+
+;; Board Sprite -> Board
+;; if cell at pacman's position is not empty, make a new board in which it is
+(check-expect (tick-board EE-BOARD R-SPRITE) EE-BOARD)
+(check-expect (tick-board ED-BOARD D-SPRITE) ED-BOARD)
+(check-expect (tick-board DD-BOARD U-SPRITE) ED-BOARD)
+(check-expect (tick-board DD-BOARD L-SPRITE) ED-BOARD)
+
+ 
+;(define (tick-board bd pm) bd)
+
+(define (tick-board bd pm) 
+  (new-board-w-empty-at (sprite-x pm) (sprite-y pm) bd)) 
+
+;; Number Number Board -> Board
+;; produces a new board with the same cell values as bd, except it has "empty" at x, y
+(check-expect (new-board-w-empty-at 1 1 DD-BOARD) ED-BOARD)
+(check-expect (new-board-w-empty-at 2 1 ED-BOARD) EE-BOARD)
+(check-expect (new-board-w-empty-at 1 1 EE-BOARD) EE-BOARD)
+
+;(define (new-board-w-empty-at x0 y0 bd) bd)
+
+#;
+(define (new-board-w-empty-at x0 y0 bd)
+  (map-board (lambda (x y cv) ; Natural Natural CellValue -> CellValue
+               (...x y cv))
+             bd))
+
+(define (new-board-w-empty-at x0 y0 bd)
+  (map-board (lambda (x y cv) ; Natural Natural CellValue -> CellValue
+               (if (and (= x0 x) (= y0 y))
+                   E
+                   cv)) 
+             bd)) 
+
+
+;; Board Image Sprite -> Image
+;; updates the board image with an empty cell at x, y if pac-man is in a cell with a dot
+(check-expect (tick-board-image EE-BOARD SMALL-MTB R-SPRITE) SMALL-MTB)
+(check-expect (tick-board-image DD-BOARD SMALL-MTB R-SPRITE) 
+              (place-cell-image MTC
+                                (sprite-x R-SPRITE)
+                                (sprite-y R-SPRITE)
+                                SMALL-MTB))
+
+(define (tick-board-image bd board-image pm)
+  (local [(define x (sprite-x pm))
+          (define y (sprite-y pm))]
+    (if (string=? (board-ref bd x y) "dot")
+        (place-cell-image MTC x y board-image)
+        (if (string=? (board-ref bd x y) "fruit")
+            (place-cell-image MTC x y board-image)
+            board-image))))
+
+;; Sprite Board Score -> Score
+;; increases by 1 the score if pac-man is now in a cell containing a dot
+(check-expect (tick-score R-SPRITE EE-BOARD 0) 0)
+(check-expect (tick-score L-SPRITE ED-BOARD 1) 1)
+(check-expect (tick-score U-SPRITE DD-BOARD 1) 2) 
+(check-expect (tick-score D-SPRITE DD-BOARD 0) 1)
+
+
+;(define (tick-score new-pm last-board score) score)
+
+(define (tick-score new-pm last-board score)
+  (if (string=? D (board-ref last-board (sprite-x new-pm) (sprite-y new-pm)))
+      (add1 score)
+      (if (string=? F (board-ref last-board (sprite-x new-pm) (sprite-y new-pm)))
+          (+ 5 score)
+          score)))
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; on-key handler:
+
+
+;; GameState KeyEvent -> GameState
+;; updates pac-man's direction based on key
+(check-expect (key-handler MTB-GS "up")
+              (make-gs (new-dir-pm (gs-pm MTB-GS) "up")
+                       (gs-board MTB-GS)
+                       (gs-board-image MTB-GS)
+                       (gs-score MTB-GS)))
+(check-expect (key-handler MTB-GS "down")
+              (make-gs (new-dir-pm (gs-pm MTB-GS) "down")
+                       (gs-board MTB-GS)
+                       (gs-board-image MTB-GS)
+                       (gs-score MTB-GS)))
+
+(define (key-handler gs key)
+  (make-gs (new-dir-pm (gs-pm gs) key)
+           (gs-board gs)
+           (gs-board-image gs)
+           (gs-score gs)))
+
+;; Sprite KeyEvent -> Sprite
+;; produces pac-man facing in a new direction based on key
+(check-expect (new-dir-pm D-SPRITE "up")    U-SPRITE)
+(check-expect (new-dir-pm U-SPRITE "down")  D-SPRITE)
+(check-expect (new-dir-pm D-SPRITE "left")  L-SPRITE)
+(check-expect (new-dir-pm D-SPRITE "right") R-SPRITE)
+(check-expect (new-dir-pm D-SPRITE "a")     D-SPRITE)
+
+(define (new-dir-pm pm key)
+  (cond [(key=? "up"    key) (make-sprite (sprite-x pm) (sprite-y pm) "U")]
+        [(key=? "down"  key) (make-sprite (sprite-x pm) (sprite-y pm) "D")]      
+        [(key=? "left"  key) (make-sprite (sprite-x pm) (sprite-y pm) "L")]
+        [(key=? "right" key) (make-sprite (sprite-x pm) (sprite-y pm) "R")]
+        [else pm]))
+
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; stop-when handler:
+
+
+;; GameState -> Boolean
+;; determines if pac-man has eaten all the dots
+(check-expect (game-over? END-GS) true)
+(check-expect (game-over? (make-gs D-SPRITE EE-BOARD SMALL-MTB 2)) true)
+(check-expect (game-over? (make-gs L-SPRITE ED-BOARD SMALL-MTB 1)) false)
+(check-expect (game-over? (make-gs U-SPRITE ED-BOARD SMALL-MTB 0)) false)
+
+(define (game-over? gs)
+  (local [(define (board-over? bd) (foldr-board (lambda (x y cv b)
+                                                  (and b (not (string=? cv D))))
+                                                true
+                                                bd))]
+    (board-over? (gs-board gs)))) 
+
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; to-draw handler:
+
+
+;; GameState -> Image
+;; draws the game
+(check-expect (render MTB-GS)
+              (render-pm (gs-pm MTB-GS)
+                         (render-score (gs-score MTB-GS)
+                                       (gs-board-image MTB-GS))))
+
+(define (render gs)
+  (render-pm (gs-pm gs)
+             (render-score (gs-score gs)
+                           (gs-board-image gs))))
+
+;; Board -> Image
+;; draws the board
+(check-expect (render-board RENDER-TEST-BOARD)
+              (place-cell-image (cell-image (board-ref RENDER-TEST-BOARD 0 0))
+                                0 0
+                                (place-cell-image (cell-image (board-ref RENDER-TEST-BOARD 1 0))
+                                                  1 0
+                                                  (place-cell-image (cell-image (board-ref RENDER-TEST-BOARD 0 1))
+                                                                    0 1
+                                                                    (place-cell-image (cell-image (board-ref RENDER-TEST-BOARD 1 1))
+                                                                                      1 1
+                                                                                      MTB)))))
+
+(define (render-board bd)
+  (foldr-board (lambda (x y cv b)
+                 (place-cell-image (cell-image cv) x y b))
+               MTB
+               bd))
+
+;; Sprite Image -> Image
+;; adds pac-man image to img
+(check-expect (render-pm R-SPRITE MTB)
+              (place-cell-image PM 
+                                (sprite-x R-SPRITE)
+                                (sprite-y R-SPRITE)
+                                MTB))
+
+(define (render-pm pm img)
+  (place-cell-image PM (sprite-x pm) (sprite-y pm) img))
+
+;; Score Image -> Image
+;; adds score to img
+(check-expect (render-score 0 MTB)
+              (place-image (text "Score: 0" SCORE-TEXT-SIZE "black")
+                           (/ BOARD-WIDTH 2)
+                           (+ BOARD-HEIGHT
+                              (/ SCORE-HEIGHT 2))
+                           MTB))
+
+(define (render-score score img) 
+  (local [(define score-text
+            (text (string-append "Score: " (number->string score)) SCORE-TEXT-SIZE "black"))]
+    (place-image score-text
+                 (/ BOARD-WIDTH 2)
+                 (+ BOARD-HEIGHT (/ SCORE-HEIGHT 2))
+                 img)))
+
+;; CellValue -> Image
+;; draws a board cell
+(check-expect (cell-image "empty") MTC)
+(check-expect (cell-image "dot")   DTC)
+(check-expect (cell-image "wall")  WALL)
+(check-expect (cell-image "fruit") FTC)
+
+
+(define (cell-image cv)
+  (cond [(string=? cv "empty") MTC] 
+        [(string=? cv "dot")   DTC]
+        [(string=? cv "fruit") FTC]
+        [(string=? cv "wall")  WALL]))
+
+
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;;-------------------------------------------------------------------------------------
+;; Operations on Board and other helpers:
+
+
+;; Board Natural Natural -> CellValue
+;; looks up the value of a Board cell
+(check-expect (board-ref ED-BOARD 1 1) "empty")
+(check-expect (board-ref ED-BOARD 2 1) "dot")
+
+(define (board-ref bd x y)
+  (vector-ref (vector-ref bd y) x))
+
+
+;; (Natural Natural CellValue -> CellValue) Board -> Board
+;; the analogue of map for boards, the function is called for
+;; each position in the board to produce a cell value for that
+;; position in a new resulting board
+(check-expect (map-board (lambda (x y cv) "dot") SMALL-BOARD)
+              (vector (vector D D D)
+                      (vector D D D)))
+
+(define (map-board fn bd)
+  (build-vector (vector-length bd)
+                (lambda (y)
+                  (build-vector (vector-length (vector-ref bd y))
+                                (lambda (x)
+                                  (fn x y (board-ref bd x y)))))))
+
+;; (Natural Natural CellValue X -> X) X Board -> X
+;; the analogue of foldr for boards, the function is called for
+;; each position in the board to produce single value
+(check-expect (foldr-board (lambda (x y cv str) (string-append cv str)) "" SMALL-BOARD)
+              "emptyemptyemptyemptyemptyempty")
+
+(define (foldr-board fn base bd)
+  (local [(define nrows (vector-length bd))
+          (define ncols (vector-length (vector-ref bd 0)))
+          
+          (define (rows y b)
+            (cond [(= y nrows) b]
+                  [else
+                   (rows (add1 y)
+                         (cols 0 y b))]))
+          (define (cols x y b)
+            (cond [(= x ncols) b]
+                  [else
+                   (cols (add1 x)
+                         y
+                         (fn x y (board-ref bd x y) b))]))]
+    (rows 0 base)))
+
+;; Image Natural Natural Image -> Image
+;; adds cell-img to board-image at x, y board coordinates
+(check-expect (place-cell-image MTC 1 1 SMALL-MTB)
+              (place-image MTC
+                           (+ (* 1 CELL-SIZE) (/ CELL-SIZE 2))
+                           (+ (* 1 CELL-SIZE) (/ CELL-SIZE 2))
+                           SMALL-MTB))
+
+(define (place-cell-image cell-img x y board-image)
+  (place-image cell-img
+               (+ (* x CELL-SIZE) (/ CELL-SIZE 2))
+               (+ (* y CELL-SIZE) (/ CELL-SIZE 2))
+               board-image))
+
+
+
+
+;(main)
